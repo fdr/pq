@@ -78,3 +78,13 @@ SELECT 'hello', 'goodbye';`)
 		`[["0"] ["1"] ["2"] ["3"] ["hello" "goodbye"]]`)
 
 }
+
+func TestEmptyQuery(t *testing.T) {
+	c := openPgConn(t)
+	s, err := c.SimpleQuery("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bufferAndCheckRows(t, s, `[]`)
+}
