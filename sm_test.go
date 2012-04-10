@@ -26,19 +26,10 @@ func openPgConn(t *testing.T) *conn {
 	return dconn.(*conn)
 }
 
-func TestSimple(t *testing.T) {
-	c := openPgConn(t)
-	s, err := c.SimpleQuery(
-		"SELECT 0; " +
-			"SELECT generate_series(1, 3); " +
-			"SELECT 'hello', 'goodbye';")
+func bufferAndCheckRows(t *testing.T, s *pqBusyState, expected string) {
+	rows := make([]row, 0, 3)
 
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rows := make([]row, 0, 2)
-
+Loop:
 	for {
 		emitted, err := s.pgBusyNext()
 		if err != nil {
@@ -53,21 +44,37 @@ func TestSimple(t *testing.T) {
 			copy(rowCopy, conc)
 			rows = append(rows, rowCopy)
 		case nil:
-			goto Escape
+			break Loop
 		default:
 			t.Fatalf("Unexpected emission: %q", emitted)
 		}
-
-		if emitted == nil {
-			break
-		}
 	}
 
-Escape:
-	results := fmt.Sprintf("%q", rows)
-	expected := `[["0"] ["1"] ["2"] ["3"] ["hello" "goodbye"]]`
-
-	if results != expected {
+	if results := fmt.Sprintf("%q", rows); results != expected {
 		t.Fatalf("\nGot:\t\t%v\nExpected:\t%v", results, expected)
 	}
+}
+
+func TestSimpleSingleStatement(t *testing.T) {
+	c := openPgConn(t)
+	s, err := c.SimpleQuery("SELECT 0;")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bufferAndCheckRows(t, s, `[["0"]]`)
+}
+
+func TestSimpleMultiStatement(t *testing.T) {
+	c := openPgConn(t)
+	s, err := c.SimpleQuery(`SELECT 0;
+SELECT generate_series(1, 3);
+SELECT 'hello', 'goodbye';`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bufferAndCheckRows(t, s,
+		`[["0"] ["1"] ["2"] ["3"] ["hello" "goodbye"]]`)
+
 }
