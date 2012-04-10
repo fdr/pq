@@ -39,6 +39,10 @@ Again:
 	case msgCopyOutResponseH:
 		panic("unimplemented: CopyOutResponse")
 	case msgRowDescriptionT:
+		// Store the RowDescription and process another
+		// message instead of returning immediately.  This is
+		// only to enable the yielding of subsequent DataRow
+		// messages.
 		n := r.int16()
 
 		s.desc.cols = make([]string, n)
@@ -73,8 +77,6 @@ Again:
 
 	return emit, err
 }
-
-
 
 func (cn *conn) SimpleQuery(cmd string) (it *pqBusyState, err error) {
 	defer errRecover(&err)

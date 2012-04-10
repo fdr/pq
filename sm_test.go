@@ -1,8 +1,8 @@
 package pq
 
 import (
-	"os"
 	"fmt"
+	"os"
 	"testing"
 )
 
@@ -28,10 +28,16 @@ func openPgConn(t *testing.T) *conn {
 
 func TestSimple(t *testing.T) {
 	c := openPgConn(t)
-	s, err := c.SimpleQuery("SELECT 1; SELECT 2, 3;")
+	s, err := c.SimpleQuery(
+		"SELECT 0; " +
+			"SELECT generate_series(1, 3); " +
+			"SELECT 'hello', 'goodbye';")
+
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	rows := make([]row, 0, 2)
 
 	for {
 		emitted, err := s.pgBusyNext()
@@ -39,13 +45,29 @@ func TestSimple(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		switch emitted.(type) {
+		switch conc := emitted.(type) {
+		case result:
+		case row:
+			rowCopy := make(row, len(conc))
+
+			copy(rowCopy, conc)
+			rows = append(rows, rowCopy)
+		case nil:
+			goto Escape
 		default:
-			fmt.Printf("%c %#v %#v\n", emitted, t, s)
+			t.Fatalf("Unexpected emission: %q", emitted)
 		}
 
-		if emitted == nil { break }
+		if emitted == nil {
+			break
+		}
 	}
 
-	t.Fatal("nope")
+Escape:
+	results := fmt.Sprintf("%q", rows)
+	expected := `[["0"] ["1"] ["2"] ["3"] ["hello" "goodbye"]]`
+
+	if results != expected {
+		t.Fatalf("\nGot:\t\t%v\nExpected:\t%v", results, expected)
+	}
 }
