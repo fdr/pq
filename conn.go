@@ -181,21 +181,13 @@ func (cn *conn) prepareTo(q, stmtName string) (_ driver.Stmt, err error) {
 	t, r = cn.recv()
 	switch t {
 	case msgRowDescriptionT:
+		n := r.int16()
 		st.rd.cols = make([]string, n)
 		st.rd.ooid = make([]int, n)
 		for i := range st.rd.cols {
 			st.rd.cols[i] = r.string()
 			r.next(6)
 			st.rd.ooid[i] = r.int32()
-			r.next(8)
-		}
-		n := r.int16()
-		st.cols = make([]string, n)
-		st.ooid = make([]int, n)
-		for i := range st.cols {
-			st.cols[i] = r.string()
-			r.next(6)
-			st.ooid[i] = r.int32()
 			r.next(8)
 		}
 	case msgNoDatan:
@@ -205,6 +197,8 @@ func (cn *conn) prepareTo(q, stmtName string) (_ driver.Stmt, err error) {
 	}
 
 	return st, nil
+}
+
 func (cn *conn) Prepare(q string) (_ driver.Stmt, err error) {
 	st, err := cn.prepareTo(q, cn.gname())
 	return st, err

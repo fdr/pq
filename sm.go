@@ -32,13 +32,13 @@ Again:
 	t, r := s.cn.recv1()
 
 	switch t {
-	case CommandComplete:
+	case msgCommandCompleteC:
 		emit = parseComplete(r.string())
-	case CopyInResponse:
+	case msgCopyInResponseG:
 		panic("unimplemented: CopyInResponse")
-	case CopyOutResponse:
+	case msgCopyOutResponseH:
 		panic("unimplemented: CopyOutResponse")
-	case RowDescription:
+	case msgRowDescriptionT:
 		n := r.int16()
 
 		s.desc.cols = make([]string, n)
@@ -52,7 +52,7 @@ Again:
 
 		s.row = make([]driver.Value, n)
 		goto Again
-	case DataRow:
+	case msgDataRowD:
 		n := r.int16()
 		for i := 0; i < len(s.row) && i < n; i++ {
 			l := r.int32()
@@ -62,12 +62,12 @@ Again:
 			s.row[i] = decode(r.next(l), s.desc.ooid[i])
 		}
 		emit = s.row
-	case EmptyQueryResponse:
-	case ErrorResponse:
+	case msgEmptyQueryResponseI:
+	case msgErrorResponseE:
 		s.err = parseError(r)
-	case ReadyForQuery:
+	case msgReadyForQueryZ:
 		emit = nil
-	case NoticeResponse:
+	case msgNoticeResponseN:
 		panic("unimplemented: NoticeResponse")
 	}
 
@@ -79,7 +79,7 @@ Again:
 func (cn *conn) SimpleQuery(cmd string) (it *pqBusyState, err error) {
 	defer errRecover(&err)
 
-	b := newWriteBuf(Query)
+	b := newWriteBuf(msgQueryQ)
 	b.string(cmd)
 	cn.send(b)
 
