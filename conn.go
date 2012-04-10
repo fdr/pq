@@ -176,11 +176,19 @@ func (cn *conn) prepareTo(q, stmtName string) (_ driver.Stmt, err error) {
 	if t != msgParameterDescriptiont {
 		errorf("unexpected describe params response: %q", t)
 	}
-	st.nparams = int(r.int16())
+	st.rd.nparams = int(r.int16())
 
 	t, r = cn.recv()
 	switch t {
 	case msgRowDescriptionT:
+		st.rd.cols = make([]string, n)
+		st.rd.ooid = make([]int, n)
+		for i := range st.rd.cols {
+			st.rd.cols[i] = r.string()
+			r.next(6)
+			st.rd.ooid[i] = r.int32()
+			r.next(8)
+		}
 		n := r.int16()
 		st.cols = make([]string, n)
 		st.ooid = make([]int, n)
@@ -197,8 +205,6 @@ func (cn *conn) prepareTo(q, stmtName string) (_ driver.Stmt, err error) {
 	}
 
 	return st, nil
-}
-
 func (cn *conn) Prepare(q string) (_ driver.Stmt, err error) {
 	st, err := cn.prepareTo(q, cn.gname())
 	return st, err
@@ -358,12 +364,10 @@ func (cn *conn) auth(r *readBuf, o Values) {
 }
 
 type stmt struct {
-	cn      *conn
-	name    string
-	cols    []string
-	nparams int
-	ooid    []int
-	closed  bool
+	cn     *conn
+	name   string
+	rd     rowDescription
+	closed bool
 }
 
 func (st *stmt) Close() (err error) {
@@ -474,7 +478,7 @@ func (st *stmt) exec(v []driver.Value) {
 }
 
 func (st *stmt) NumInput() int {
-	return st.nparams
+	return st.rd.nparams
 }
 
 type result int64
@@ -513,7 +517,7 @@ func (rs *rows) Close() error {
 }
 
 func (rs *rows) Columns() []string {
-	return rs.st.cols
+	return rs.st.rd.cols
 }
 
 func (rs *rows) Next(dest []driver.Value) (err error) {
@@ -543,7 +547,7 @@ func (rs *rows) Next(dest []driver.Value) (err error) {
 				if l == -1 {
 					continue
 				}
-				dest[i] = decode(r.next(l), rs.st.ooid[i])
+				dest[i] = decode(r.next(l), rs.st.rd.ooid[i])
 			}
 			return
 		default:
