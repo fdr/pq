@@ -70,7 +70,7 @@ func (cxt *febeContext) pqCopyOutTrans() (
 
 	switch t, r := cxt.cn.recv1(); t {
 	case msgCopyDatad:
-		// The whle readbuf is the payload.
+		// The whole readbuf is the emission.
 		return PQ_STATE_COPYOUT, copyOutData(r), err
 	case msgCopyDonec:
 		return PQ_STATE_BUSY, nil, err
