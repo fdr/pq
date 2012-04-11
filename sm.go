@@ -1,7 +1,6 @@
 package pq
 
 import (
-	"fmt"
 	"database/sql/driver"
 )
 
@@ -42,24 +41,20 @@ func (cxt *febeContext) pqNext() (s febeState, emit interface{}, err error) {
 	for {
 		switch cxt.state {
 		case PQ_STATE_BUSY:
-			s, emit, err = cxt.pqBusyTrans()
+			cxt.state, emit, err = cxt.pqBusyTrans()
 		case PQ_STATE_COPYOUT:
-			s, emit, err = cxt.pqCopyOutTrans()
+			cxt.state, emit, err = cxt.pqCopyOutTrans()
 		}
 
-		if err != nil {
+		// Break the loop if there's something to tell the
+		// caller, or the connection is idle and ready to be
+		// used again.
+		if err != nil || emit != nil || cxt.state == PQ_STATE_IDLE {
 			break
 		}
 
-		if emit != nil {
-			break
-		}
-
-		if cxt.state == PQ_STATE_IDLE {
-			break
-		}
-
-		fmt.Printf("cycling: %q\n", cxt.state)
+		// There is nothing useful to report to the caller, so
+		// run the state machine again until there is.
 	}
 
 	return s, emit, err
@@ -89,9 +84,10 @@ func (cxt *febeContext) pqCopyOutTrans() (
 }
 
 func (cxt *febeContext) pqBusyTrans() (
-	_ febeState, emit interface{}, err error) {
+	s febeState, emit interface{}, err error) {
 
 	defer errRecover(&err)
+	s = cxt.state
 
 Again:
 	t, r := cxt.cn.recv1()
@@ -102,7 +98,7 @@ Again:
 	case msgCopyInResponseG:
 		panic("unimplemented: CopyInResponse")
 	case msgCopyOutResponseH:
-		cxt.state = PQ_STATE_COPYOUT
+		s = PQ_STATE_COPYOUT
 	case msgRowDescriptionT:
 		// Store the RowDescription and process another
 		// message instead of returning immediately, as there
@@ -139,13 +135,13 @@ Again:
 	case msgErrorResponseE:
 		emit = parseError(r)
 	case msgReadyForQueryZ:
-		cxt.state = PQ_STATE_IDLE
+		s = PQ_STATE_IDLE
 		emit = nil
 	case msgNoticeResponseN:
 		panic("unimplemented: NoticeResponse")
 	}
 
-	return cxt.state, emit, err
+	return s, emit, err
 }
 
 func newFebeContext(cn *conn) (_ *febeContext) {

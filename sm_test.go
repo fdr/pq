@@ -1,6 +1,7 @@
 package pq
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"testing"
@@ -60,7 +61,11 @@ Loop:
 		}
 	}
 
-	if results := fmt.Sprintf("%q", rows); results != expected {
+	quickCompare(t, fmt.Sprintf("%q", rows), expected)
+}
+
+func quickCompare(t *testing.T, results, expected string) {
+	if results != expected {
 		t.Fatalf("\nGot:\t\t%v\nExpected:\t%v", results, expected)
 	}
 }
@@ -129,5 +134,18 @@ Loop:
 		}
 	}
 
-	t.FailNow()
+	var resbuf bytes.Buffer
+
+	for _, v := range copyOutRows {
+		resbuf.WriteString(string(*v))
+	}
+
+	results := resbuf.String()
+	expected := `1
+2
+3
+4
+5
+`
+	quickCompare(t, results, expected)
 }
