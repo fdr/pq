@@ -107,6 +107,8 @@ func TestCopyOut(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	copyOutRows := make([]copyOutData, 0, 5)
+
 Loop:
 	for {
 		_, emitted, err := cxt.pqNext()
@@ -114,14 +116,18 @@ Loop:
 			t.Fatal(err)
 		}
 
-		switch emitted.(type) {
+		switch typ := emitted.(type) {
 		case result:
 		case row:
 			t.Fatal("expect no row messages")
+		case copyOutData:
+			copyOutRows = append(copyOutRows, typ)
 		case nil:
 			break Loop
 		default:
 			t.Fatalf("Unexpected emission: %q", emitted)
 		}
 	}
+
+	t.FailNow()
 }

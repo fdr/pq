@@ -1,8 +1,8 @@
 package pq
 
 import (
-	"database/sql/driver"
 	"fmt"
+	"database/sql/driver"
 )
 
 type row []driver.Value
@@ -16,6 +16,7 @@ type rowDescription struct {
 const (
 	PQ_STATE_IDLE = iota
 	PQ_STATE_BUSY
+	PQ_STATE_COPYOUT
 )
 
 type febeState byte
@@ -37,14 +38,51 @@ type febeContext struct {
 
 type simpleQueryReq *writeBuf
 
-func (cxt *febeContext) pqNext() (
-	s febeState, emit interface{}, err error) {
+func (cxt *febeContext) pqNext() (s febeState, emit interface{}, err error) {
+	for {
+		switch cxt.state {
+		case PQ_STATE_BUSY:
+			s, emit, err = cxt.pqBusyTrans()
+		case PQ_STATE_COPYOUT:
+			s, emit, err = cxt.pqCopyOutTrans()
+		}
+
+		if err != nil {
+			break
+		}
+
+		if emit != nil {
+			break
+		}
+
+		if cxt.state == PQ_STATE_IDLE {
+			break
+		}
+
+		fmt.Printf("cycling: %q\n", cxt.state)
+	}
+
+	return s, emit, err
+}
+
+type copyFailed string
+type copyOutData *readBuf
+
+func (cxt *febeContext) pqCopyOutTrans() (
+	_ febeState, emit interface{}, err error) {
 
 	defer errRecover(&err)
 
-	switch cxt.state {
-	case PQ_STATE_BUSY:
-		return cxt.pqBusyTrans()
+	switch t, r := cxt.cn.recv1(); t {
+	case msgCopyDatad:
+		// The whle readbuf is the payload.
+		return PQ_STATE_COPYOUT, copyOutData(r), err
+	case msgCopyDonec:
+		return PQ_STATE_BUSY, nil, err
+	case msgCopyFailf:
+		return PQ_STATE_BUSY, copyFailed(r.string()), err
+	default:
+		errorf("unrecognized message %q", t)
 	}
 
 	panic("not reached")
@@ -64,15 +102,7 @@ Again:
 	case msgCopyInResponseG:
 		panic("unimplemented: CopyInResponse")
 	case msgCopyOutResponseH:
-		// XXX: doing nothing...no special handling for binary
-		// as-is.  I think that's for human readable output.
-		//
-		// flags := r.byte()
-		// nCol := r.int16()
-
-		// for i := 0; i < nCol; i += 1 {
-		// 	colFlags := r.int16()
-		// }
+		cxt.state = PQ_STATE_COPYOUT
 	case msgRowDescriptionT:
 		// Store the RowDescription and process another
 		// message instead of returning immediately, as there
@@ -102,13 +132,13 @@ Again:
 			}
 			cxt.row[i] = decode(r.next(l), cxt.desc.ooid[i])
 		}
+
 		emit = cxt.row
 	case msgEmptyQueryResponseI:
 		goto Again
 	case msgErrorResponseE:
 		emit = parseError(r)
 	case msgReadyForQueryZ:
-		fmt.Println("Got ready for query")
 		cxt.state = PQ_STATE_IDLE
 		emit = nil
 	case msgNoticeResponseN:
