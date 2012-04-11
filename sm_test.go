@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func openPgConn(t *testing.T) *conn {
+func openNewFebeContext(t *testing.T) *febeContext {
 	datname := os.Getenv("PGDATABASE")
 	sslmode := os.Getenv("PGSSLMODE")
 
@@ -23,15 +23,21 @@ func openPgConn(t *testing.T) *conn {
 		t.Fatal(err)
 	}
 
-	return dconn.(*conn)
+	return newFebeContext(dconn.(*conn))
 }
 
-func bufferAndCheckRows(t *testing.T, s *pqBusyState, expected string) {
+func bufferAndCheckRows(t *testing.T, s *febeContext, expected string) {
+
 	rows := make([]row, 0, 3)
+
+	if s.state != PQ_STATE_BUSY {
+		t.Fatalf("expected to be in the busy state, "+
+			"but instead was in %q", s.state)
+	}
 
 Loop:
 	for {
-		emitted, err := s.pgBusyNext()
+		state, emitted, err := s.pqNext()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -44,6 +50,10 @@ Loop:
 			copy(rowCopy, conc)
 			rows = append(rows, rowCopy)
 		case nil:
+			if state != PQ_STATE_IDLE {
+				t.Fatal("expected connection to be idle "+
+					"with nil emission, but it wasn't %q", s)
+			}
 			break Loop
 		default:
 			t.Fatalf("Unexpected emission: %q", emitted)
@@ -56,35 +66,62 @@ Loop:
 }
 
 func TestSimpleSingleStatement(t *testing.T) {
-	c := openPgConn(t)
-	s, err := c.SimpleQuery("SELECT 0;")
+	cxt := openNewFebeContext(t)
+	err := cxt.SimpleQuery("SELECT 0;")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	bufferAndCheckRows(t, s, `[["0"]]`)
+	bufferAndCheckRows(t, cxt, `[["0"]]`)
 }
 
 func TestSimpleMultiStatement(t *testing.T) {
-	c := openPgConn(t)
-	s, err := c.SimpleQuery(`SELECT 0;
+	cxt := openNewFebeContext(t)
+	err := cxt.SimpleQuery(`SELECT 0;
 SELECT generate_series(1, 3);
 SELECT 'hello', 'goodbye';`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	bufferAndCheckRows(t, s,
+	bufferAndCheckRows(t, cxt,
 		`[["0"] ["1"] ["2"] ["3"] ["hello" "goodbye"]]`)
 
 }
 
 func TestEmptyQuery(t *testing.T) {
-	c := openPgConn(t)
-	s, err := c.SimpleQuery("")
+	cxt := openNewFebeContext(t)
+	err := cxt.SimpleQuery("")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	bufferAndCheckRows(t, s, `[]`)
+	bufferAndCheckRows(t, cxt, `[]`)
+}
+
+func TestCopyOut(t *testing.T) {
+	cxt := openNewFebeContext(t)
+	err := cxt.SimpleQuery(
+		`COPY (SELECT generate_series(1, 5)) TO STDOUT;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+Loop:
+	for {
+		_, emitted, err := cxt.pqNext()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		switch emitted.(type) {
+		case result:
+		case row:
+			t.Fatal("expect no row messages")
+		case nil:
+			break Loop
+		default:
+			t.Fatalf("Unexpected emission: %q", emitted)
+		}
+	}
 }
