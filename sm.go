@@ -12,6 +12,12 @@ type rowDescription struct {
 	ooid    []int
 }
 
+type notification struct {
+	pid     int
+	channel string
+	payload string
+}
+
 const (
 	PQ_STATE_IDLE = iota
 	PQ_STATE_BUSY
@@ -26,16 +32,21 @@ type febeContext struct {
 
 	cn *conn
 
-	// Emitted by RowDescription
+	// emitted by RowDescription
 	desc rowDescription
 
-	// Emitted by DataRow
+	// emitted by DataRow
 	row row
 
-	// Set by a caller to send bulk CopyData to the server
+	// emitted by NotificationResponse
+	notification notification
+
+	// set by caller to send bulk CopyData.
 	copyInData []byte
 
-	// Ends a copy-in.  NB: copyInData is NOT sent when set
+	// set by a caller to end a copy-in.
+	//
+	// NB: copyInData is NOT sent when set.
 	copyInFinish bool
 }
 
@@ -43,11 +54,30 @@ type simpleQueryReq *writeBuf
 
 func (cxt *febeContext) pqNext() (s febeState, emit interface{}, err error) {
 	for {
+		var t pqMsgType
+		var r *readBuf
+
+		// In any state where the client is expected to
+		// receive input, handle the asynchronous operations
+		// that the server is allowed to emit at any time.
+		if cxt.state != PQ_STATE_COPYIN {
+			t, r = cxt.cn.recv1()
+
+			switch t {
+			case msgNotificationResponseA:
+				return cxt.state, cxt.notification, err
+
+			// Unimplemented, but no cause for panic
+			case msgNoticeResponseN:
+			case msgParameterStatusS:
+			}
+		}
+
 		switch cxt.state {
 		case PQ_STATE_BUSY:
-			cxt.state, emit, err = cxt.pqBusyTrans()
+			cxt.state, emit, err = cxt.pqBusyTrans(t, r)
 		case PQ_STATE_COPYOUT:
-			cxt.state, emit, err = cxt.pqCopyOutTrans()
+			cxt.state, emit, err = cxt.pqCopyOutTrans(t, r)
 		case PQ_STATE_COPYIN:
 			cxt.state, emit, err = cxt.pqCopyInTrans()
 		}
@@ -89,12 +119,12 @@ func (cxt *febeContext) pqCopyInTrans() (
 	return cxt.state, emit, err
 }
 
-func (cxt *febeContext) pqCopyOutTrans() (
+func (cxt *febeContext) pqCopyOutTrans(t pqMsgType, r *readBuf) (
 	_ febeState, emit interface{}, err error) {
 
 	defer errRecover(&err)
 
-	switch t, r := cxt.cn.recv1(); t {
+	switch t {
 	case msgCopyDatad:
 		// The whole readbuf is the emission.
 		return PQ_STATE_COPYOUT, copyOutData(r), err
@@ -109,13 +139,11 @@ func (cxt *febeContext) pqCopyOutTrans() (
 	panic("not reached")
 }
 
-func (cxt *febeContext) pqBusyTrans() (
+func (cxt *febeContext) pqBusyTrans(t pqMsgType, r *readBuf) (
 	s febeState, emit interface{}, err error) {
 
 	defer errRecover(&err)
 	s = cxt.state
-
-	t, r := cxt.cn.recv1()
 
 	switch t {
 	case msgCommandCompleteC:
@@ -126,11 +154,11 @@ func (cxt *febeContext) pqBusyTrans() (
 		s = PQ_STATE_COPYOUT
 	case msgRowDescriptionT:
 		// Store the RowDescription and process another
-		// message instead of returning immediately, as there
-		// doesn't seem to be the reason why a caller would
-		// ever want to be informed of a RowDescription in and
-		// of itself.  This is only to enable the yielding of
-		// subsequent DataRow messages.
+		// message by emitting nil, as there doesn't seem to
+		// be the reason why a caller would ever want to be
+		// informed of a RowDescription in and of itself.
+		// This is only to enable the yielding of subsequent
+		// DataRow messages.
 		n := r.int16()
 
 		cxt.desc.cols = make([]string, n)
@@ -171,11 +199,24 @@ func (cxt *febeContext) pqBusyTrans() (
 		if emit != nil {
 			panic("emit must be nil in this context")
 		}
-	case msgNoticeResponseN:
-		panic("unimplemented: NoticeResponse")
+	case msgParseComplete1:
+	case msgBindComplete2:
+	case msgCloseComplete3:
+	case msgBackendKeyDataK:
+	case msgNoDatan:
+	case msgParameterDescriptiont:
+	case msgCopyBothResponseW:
+		panic("unimplemented: CopyBothResponse")
 	}
 
 	return s, emit, err
+}
+
+func (cxt *febeContext) handleNotification(r *readBuf) {
+	n := &cxt.notification
+	n.pid = r.int32()
+	n.channel = r.string()
+	n.payload = r.string()
 }
 
 func newFebeContext(cn *conn) (_ *febeContext) {
