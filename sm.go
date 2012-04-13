@@ -75,11 +75,11 @@ func (cxt *febeContext) pqNext() (s febeState, emit interface{}, err error) {
 
 		switch cxt.state {
 		case PQ_STATE_BUSY:
-			cxt.state, emit, err = cxt.pqBusyTrans(t, r)
+			cxt.state, emit, err = cxt.pqBusyTransition(t, r)
 		case PQ_STATE_COPYOUT:
-			cxt.state, emit, err = cxt.pqCopyOutTrans(t, r)
+			cxt.state, emit, err = cxt.pqCopyOutTransition(t, r)
 		case PQ_STATE_COPYIN:
-			cxt.state, emit, err = cxt.pqCopyInTrans()
+			cxt.state, emit, err = cxt.pqCopyInTransition()
 		}
 
 		// Break the loop if there's something to tell the
@@ -98,7 +98,7 @@ func (cxt *febeContext) pqNext() (s febeState, emit interface{}, err error) {
 type copyFailed string
 type copyOutData *readBuf
 
-func (cxt *febeContext) pqCopyInTrans() (
+func (cxt *febeContext) pqCopyInTransition() (
 	_ febeState, emit interface{}, err error) {
 
 	defer errRecover(&err)
@@ -119,7 +119,7 @@ func (cxt *febeContext) pqCopyInTrans() (
 	return cxt.state, emit, err
 }
 
-func (cxt *febeContext) pqCopyOutTrans(t pqMsgType, r *readBuf) (
+func (cxt *febeContext) pqCopyOutTransition(t pqMsgType, r *readBuf) (
 	_ febeState, emit interface{}, err error) {
 
 	defer errRecover(&err)
@@ -139,7 +139,7 @@ func (cxt *febeContext) pqCopyOutTrans(t pqMsgType, r *readBuf) (
 	panic("not reached")
 }
 
-func (cxt *febeContext) pqBusyTrans(t pqMsgType, r *readBuf) (
+func (cxt *febeContext) pqBusyTransition(t pqMsgType, r *readBuf) (
 	s febeState, emit interface{}, err error) {
 
 	defer errRecover(&err)
@@ -200,12 +200,19 @@ func (cxt *febeContext) pqBusyTrans(t pqMsgType, r *readBuf) (
 			panic("emit must be nil in this context")
 		}
 	case msgParseComplete1:
+		// No action
 	case msgBindComplete2:
+		// No action
 	case msgCloseComplete3:
+		// No action
 	case msgBackendKeyDataK:
+		// No action
 	case msgNoDatan:
+		// No action
 	case msgParameterDescriptiont:
+		// No action
 	case msgCopyBothResponseW:
+		// Required for replication, but not for normal operation.
 		panic("unimplemented: CopyBothResponse")
 	}
 

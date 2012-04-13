@@ -46,6 +46,8 @@ Loop:
 
 		switch conc := emitted.(type) {
 		case result:
+			// no action required; this includes number of
+			// rows affected et al.
 		case row:
 			rowCopy := make(row, len(conc))
 
