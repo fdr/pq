@@ -35,7 +35,7 @@ type febeContext struct {
 	// Set by a caller to send bulk CopyData to the server
 	copyInData []byte
 
-	// Ends a copy-in
+	// Ends a copy-in.  NB: copyInData is NOT sent when set
 	copyInFinish bool
 }
 
