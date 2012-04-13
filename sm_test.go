@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"testing"
 )
 
@@ -55,6 +56,7 @@ Loop:
 				t.Fatal("expected connection to be idle "+
 					"with nil emission, but it wasn't %q", s)
 			}
+
 			break Loop
 		default:
 			t.Fatalf("Unexpected emission: %q", emitted)
@@ -66,6 +68,7 @@ Loop:
 
 func quickCompare(t *testing.T, results, expected string) {
 	if results != expected {
+		debug.PrintStack()
 		t.Fatalf("\nGot:\t\t%v\nExpected:\t%v", results, expected)
 	}
 }
@@ -104,10 +107,83 @@ func TestEmptyQuery(t *testing.T) {
 	bufferAndCheckRows(t, cxt, `[]`)
 }
 
+func mustWaitForReady(t *testing.T, cxt *febeContext) {
+	for {
+		_, emit, err := cxt.pqNext()
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if emit == nil {
+			break
+		}
+	}
+}
+
+func TestCopyIn(t *testing.T) {
+	cxt := openNewFebeContext(t)
+	err := cxt.SimpleQuery("CREATE TEMP TABLE foo (a int);")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mustWaitForReady(t, cxt)
+
+	sending := make(chan string)
+	done := make(chan bool)
+
+	go func() {
+
+		err = cxt.SimpleQuery("COPY foo FROM STDIN")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for {
+			s, _, err := cxt.pqNext()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if s == PQ_STATE_COPYIN {
+				payload, ok := <-sending
+
+				if !ok {
+					cxt.copyInFinish = true
+					break
+				}
+
+				cxt.copyInData = []byte(payload)
+			}
+		}
+
+		close(done)
+	}()
+
+	sending <- "1\n"
+
+	// Chunking is arbitrary in CopyIn, so test putting in
+	// one record across two state machine ticks.
+	sending <- "100"
+	sending <- "00\n"
+	close(sending)
+
+	<-done
+	mustWaitForReady(t, cxt)
+
+	err = cxt.SimpleQuery("SELECT * FROM foo;")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bufferAndCheckRows(t, cxt, `[["1"] ["10000"]]`)
+}
+
 func TestCopyOut(t *testing.T) {
 	cxt := openNewFebeContext(t)
 	err := cxt.SimpleQuery(
-		`COPY (SELECT generate_series(1, 5)) TO STDOUT;`)
+		"COPY (SELECT generate_series(1, 5)) TO STDOUT;")
 	if err != nil {
 		t.Fatal(err)
 	}

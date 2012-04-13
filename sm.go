@@ -16,6 +16,7 @@ const (
 	PQ_STATE_IDLE = iota
 	PQ_STATE_BUSY
 	PQ_STATE_COPYOUT
+	PQ_STATE_COPYIN
 )
 
 type febeState byte
@@ -31,8 +32,11 @@ type febeContext struct {
 	// Emitted by DataRow
 	row row
 
-	// Emitted by ErrorResponse
-	err *PGError
+	// Set by a caller to send bulk CopyData to the server
+	copyInData []byte
+
+	// Ends a copy-in
+	copyInFinish bool
 }
 
 type simpleQueryReq *writeBuf
@@ -44,12 +48,15 @@ func (cxt *febeContext) pqNext() (s febeState, emit interface{}, err error) {
 			cxt.state, emit, err = cxt.pqBusyTrans()
 		case PQ_STATE_COPYOUT:
 			cxt.state, emit, err = cxt.pqCopyOutTrans()
+		case PQ_STATE_COPYIN:
+			cxt.state, emit, err = cxt.pqCopyInTrans()
 		}
 
 		// Break the loop if there's something to tell the
 		// caller, or the connection is idle and ready to be
 		// used again.
-		if err != nil || emit != nil || cxt.state == PQ_STATE_IDLE {
+		if err != nil || emit != nil || cxt.state == PQ_STATE_IDLE ||
+			cxt.state == PQ_STATE_COPYIN {
 			break
 		}
 
@@ -57,11 +64,32 @@ func (cxt *febeContext) pqNext() (s febeState, emit interface{}, err error) {
 		// run the state machine again until there is.
 	}
 
-	return s, emit, err
+	return cxt.state, emit, err
 }
 
 type copyFailed string
 type copyOutData *readBuf
+
+func (cxt *febeContext) pqCopyInTrans() (
+	_ febeState, emit interface{}, err error) {
+
+	defer errRecover(&err)
+
+	if cxt.state != PQ_STATE_COPYIN {
+		panic("pq expects copy-in state")
+	}
+
+	if cxt.copyInFinish {
+		cxt.cn.send(newWriteBuf(msgCopyDonec))
+		cxt.state = PQ_STATE_BUSY
+	} else {
+		w := newWriteBuf(msgCopyDatad)
+		w.bytes(cxt.copyInData)
+		cxt.cn.send(w)
+	}
+
+	return cxt.state, emit, err
+}
 
 func (cxt *febeContext) pqCopyOutTrans() (
 	_ febeState, emit interface{}, err error) {
@@ -89,14 +117,13 @@ func (cxt *febeContext) pqBusyTrans() (
 	defer errRecover(&err)
 	s = cxt.state
 
-Again:
 	t, r := cxt.cn.recv1()
 
 	switch t {
 	case msgCommandCompleteC:
 		emit = parseComplete(r.string())
 	case msgCopyInResponseG:
-		panic("unimplemented: CopyInResponse")
+		s = PQ_STATE_COPYIN
 	case msgCopyOutResponseH:
 		s = PQ_STATE_COPYOUT
 	case msgRowDescriptionT:
@@ -110,6 +137,7 @@ Again:
 
 		cxt.desc.cols = make([]string, n)
 		cxt.desc.ooid = make([]int, n)
+
 		for i := range cxt.desc.cols {
 			cxt.desc.cols[i] = r.string()
 			r.next(6)
@@ -118,7 +146,10 @@ Again:
 		}
 
 		cxt.row = make([]driver.Value, n)
-		goto Again
+
+		if emit != nil {
+			panic("emit must be nil in this context")
+		}
 	case msgDataRowD:
 		n := r.int16()
 		for i := 0; i < len(cxt.row) && i < n; i++ {
@@ -131,12 +162,17 @@ Again:
 
 		emit = cxt.row
 	case msgEmptyQueryResponseI:
-		goto Again
+		if emit != nil {
+			panic("emit must be nil in this context")
+		}
 	case msgErrorResponseE:
 		emit = parseError(r)
 	case msgReadyForQueryZ:
 		s = PQ_STATE_IDLE
-		emit = nil
+
+		if emit != nil {
+			panic("emit must be nil in this context")
+		}
 	case msgNoticeResponseN:
 		panic("unimplemented: NoticeResponse")
 	}
