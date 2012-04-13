@@ -53,15 +53,13 @@ func (cxt *febeContext) pqNext() (s febeState, emit interface{}, err error) {
 		}
 
 		// Break the loop if there's something to tell the
-		// caller, or the connection is idle and ready to be
-		// used again.
-		if err != nil || emit != nil || cxt.state == PQ_STATE_IDLE ||
+		// caller, or it is expected that the client needs to
+		// send data.
+		if err != nil || emit != nil ||
+			cxt.state == PQ_STATE_IDLE ||
 			cxt.state == PQ_STATE_COPYIN {
 			break
 		}
-
-		// There is nothing useful to report to the caller, so
-		// run the state machine again until there is.
 	}
 
 	return cxt.state, emit, err
