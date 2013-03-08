@@ -38,6 +38,7 @@ type conn struct {
 	c     net.Conn
 	buf   *bufio.Reader
 	namei int
+	codec *codec
 }
 
 func Open(name string) (_ driver.Conn, err error) {
@@ -72,12 +73,23 @@ func Open(name string) (_ driver.Conn, err error) {
 		}
 	}
 
+	// check for a registered codec pack to use for this conn
+	// this has to passed as a part of the dsn as this is the
+	// only thing that will uniquely identify different DBs
+	codec := defaultCodec
+	if n, ok := o["codec"]; ok {
+		codec, ok = registeredCodecs[n]
+		if !ok {
+			errorf("Invalid codec %s", n)
+		}
+	}
+
 	c, err := net.Dial(network(o))
 	if err != nil {
 		return nil, err
 	}
 
-	cn := &conn{c: c}
+	cn := &conn{c: c, codec: codec}
 	cn.ssl(o)
 	cn.buf = bufio.NewReader(cn.c)
 	cn.startup(o)
@@ -476,6 +488,10 @@ func (st *stmt) Exec(v []driver.Value) (res driver.Result, err error) {
 	panic("not reached")
 }
 
+func (st *stmt) ColumnConverter(idx int) driver.ValueConverter {
+	return st.cn.codec.encoder(st.paramTyps[idx])
+}
+
 func (st *stmt) exec(v []driver.Value) {
 	w := newWriteBuf('B')
 	w.string("")
@@ -486,7 +502,7 @@ func (st *stmt) exec(v []driver.Value) {
 		if x == nil {
 			w.int32(-1)
 		} else {
-			b := encode(x, st.paramTyps[i])
+			b := st.cn.codec.encode(x, st.paramTyps[i])
 			w.int32(len(b))
 			w.bytes(b)
 		}
@@ -596,7 +612,7 @@ func (rs *rows) Next(dest []driver.Value) (err error) {
 					dest[i] = nil
 					continue
 				}
-				dest[i] = decode(r.next(l), rs.st.rowTyps[i])
+				dest[i], err = rs.st.cn.codec.decode(r.next(l), rs.st.rowTyps[i])
 			}
 			return
 		default:
