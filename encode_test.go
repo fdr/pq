@@ -57,34 +57,43 @@ func TestTimestampWithTimeZone(t *testing.T) {
 
 		// Postgres timestamps have a resolution of 1 microsecond, so don't
 		// use the full range of the Nanosecond argument
-		refTime := time.Date(2012, 11, 6, 10, 23, 42, 123456000, loc)
-		_, err = tx.Exec("insert into test(t) values($1)", refTime)
-		if err != nil {
-			t.Fatal(err)
+		refTimes := []time.Time {
+			time.Date(2012, 11, 6, 10, 23, 42, 123456000, loc),
+			time.Date(1, 1, 1, 0, 0, 0, 0, loc),
 		}
 
-		for _, pgTimeZone := range []string{"US/Eastern", "Australia/Darwin"} {
-			// Switch Postgres's timezone to test different output timestamp formats
-			_, err = tx.Exec(fmt.Sprintf("set time zone '%s'", pgTimeZone))
-			if err != nil {
-				t.Fatal(err)
-			}
+		pgTimeZones := []string{"US/Eastern", "Australia/Darwin", "UTC"}
 
-			var gotTime time.Time
-			row := tx.QueryRow("select t from test")
-			err = row.Scan(&gotTime)
-			if err != nil {
-				t.Fatal(err)
-			}
+		for _, refTime := range refTimes {
+			for _, pgTimeZone := range pgTimeZones {
+				_, err = tx.Exec("INSERT INTO test(t) VALUES ($1)", refTime)
+				if err != nil {
+					t.Fatal(err)
+				}
 
-			if !refTime.Equal(gotTime) {
-				t.Errorf("timestamps not equal: %s != %s", refTime, gotTime)
-			}
-		}
+				// Switch Postgres's timezone to test
+				// different output timestamp formats
+				_, err = tx.Exec(fmt.Sprintf("set time zone '%s'", pgTimeZone))
+				if err != nil {
+					t.Fatal(err)
+				}
 
-		_, err = tx.Exec("delete from test")
-		if err != nil {
-			t.Fatal(err)
+				var gotTime time.Time
+				row := tx.QueryRow("SELECT t FROM test")
+				err = row.Scan(&gotTime)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if !refTime.Equal(gotTime) {
+					t.Errorf("timestamps not equal: %s != %s", refTime, gotTime)
+				}
+
+				_, err = tx.Exec("DELETE FROM test")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
 		}
 	}
 }
