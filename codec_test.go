@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"github.com/lib/pq/oid"
 	"os"
 	"strconv"
 	"strings"
@@ -62,8 +63,8 @@ func noopDecoder(b []byte) (driver.Value, error) {
 
 func customCodec() *codec {
 	c := NewCodec()
-	c.RegisterDecoder(1007, int4ArrayDecoder)
-	c.RegisterEncoder(1007, int4ArrayEncoder)
+	c.RegisterDecoder(oid.T__int4, int4ArrayDecoder)
+	c.RegisterEncoder(oid.T__int4, int4ArrayEncoder)
 	return c
 }
 
@@ -107,7 +108,7 @@ func TestCustomDecode(t *testing.T) {
 }
 
 func TestGlobalDecoder(t *testing.T) {
-	RegisterDecoder(1007, int4ArrayDecoder)
+	RegisterDecoder(oid.T__int4, int4ArrayDecoder)
 	db := openTestConn(t)
 	defer db.Close()
 
